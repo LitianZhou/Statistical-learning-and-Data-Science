@@ -1,0 +1,109 @@
+---
+title: "Untitled"
+author: "LitianZhou"
+date: "4/7/2019"
+output: pdf_document
+---
+
+```{r init}
+life_exp=read.csv("Life Expectancy Data.csv")
+life_exp=na.omit(life_exp)
+life_exp=life_exp[2:22] # remove the "country" predictor
+```
+
+(a)
+```{r validation set approach}
+set.seed(1)
+trainid <- sample(1:nrow(life_exp), nrow(life_exp)/2)
+train <- life_exp[trainid,]
+test <- life_exp[-trainid,]
+```
+
+```{r LOOCV for OLS, message=FALSE, warning=FALSE}
+library(boot)
+attach(life_exp)
+glm.fit = glm(Life.expectancy~., data=life_exp)
+cv.err.OLS=cv.glm(life_exp, glm.fit)$delta[1]
+cv.err.OLS
+```
+
+```{r BSS forward and backward selection}
+library(leaps)
+
+set.seed(7)
+regfit.full=regsubsets(Life.expectancy~., life_exp,nvmax=20)
+reg.summary=summary(regfit.full)
+
+plot(reg.summary$adjr2, xlab = "Number of variables", ylab = "Adj-Rsq",type ="l")
+which.max(reg.summary$adjr2) # give 15
+points(15,reg.summary$adjr2[15], col="red",cex=2,pch=20)
+
+plot(reg.summary$bic, xlab = "Number of variables", ylab = "BIC",type ="l")
+which.min(reg.summary$bic) # give 12
+points(12,reg.summary$bic[12], col="red",cex=2,pch=20)
+coef(regfit.full,12)
+
+regfit.fwd=regsubsets(Life.expectancy~., life_exp, nvmax=20, method = "forward")
+coef(regfit.fwd,12)
+
+regfit.bwd=regsubsets(Life.expectancy~., life_exp, nvmax=20, method = "backward")
+coef(regfit.bwd,12)
+
+# Using 12 predictors, BSS, forward selection and backward selection all give the identical model
+```
+
+```{r CV-model selection: select the best size of model}
+k=10
+set.seed(5)
+folds=sample(1:k, nrow(life_exp),replace = TRUE)
+cv.errors=matrix(NA,k,19,dimnames=list(NULL,paste(1:19)))
+
+for(j in 1:k){
+  best.fit=regsubsets(Life.expectancy~., data=life_exp[folds!=j,], nvmax = 20)
+  for(i in 1:19){
+    pred=predict(best.fit, life_exp[folds==j,],id=i)
+    cv.errors[j,i]=mean((life_exp$Life.expectancy[folds==j]-pred)^2)
+  }
+}
+mean.cv.errors=apply(cv.errors,2,mean)
+plot(mean.cv.errors,type="b")
+which.min(mean.cv.errors) # give 14, depend on the random seed
+points(14,mean.cv.errors[14], col="red",cex=2,pch=20)
+mean.cv.errors[14]
+
+#use 14 predictors to fit the model
+regfit.cv.select=regsubsets(Life.expectancy~.,data=life_exp, nvmax = 14)
+coef(regfit.cv.select, 14)
+```
+
+(b)
+```{r Validation set for OLS, message=FALSE, warning=FALSE}
+attach(life_exp)
+fit.lm <- lm(Life.expectancy~., data=train)
+pred.lm <- predict(fit.lm, test)
+(err.lm <- mean((test$Life.expectancy - pred.lm)^2))
+#err.lm may inflate the error since it uses validation set approach, which does not use whole data to build the model.
+```
+(c)
+```{r ridge}
+xmat.train <- model.matrix(Life.expectancy~., data=train)[,-1]
+xmat.test <- model.matrix(Life.expectancy~., data=test)[,-1]
+fit.ridge <- cv.glmnet(xmat.train, train$Life.expectancy, alpha=0)
+(lambda <- fit.ridge$lambda.min)  # optimal lambda
+pred.ridge <- predict(fit.ridge, s=lambda, newx=xmat.test)
+(err.ridge <- mean((test$Life.expectancy - pred.ridge)^2))  # test error
+lifetest.avg <- mean(life_exp$Life.expectancy)
+#ridge.r2 <- 1 - mean((pred.ridge - xmat.test$Life.expectancy)^2) / mean((lifetest.avg - xmat.test$Life.expectancy)^2)
+```
+(d)
+```{r lasso}
+xmat.train <- model.matrix(Life.expectancy~., data=train)[,-1]
+xmat.test <- model.matrix(Life.expectancy~., data=test)[,-1]
+fit.lasso <- cv.glmnet(xmat.train, train$Life.expectancy, alpha=1)
+(lambda <- fit.lasso$lambda.min)  # optimal lambda
+pred.lasso <- predict(fit.lasso, s=lambda, newx=xmat.test)
+(err.lasso <- mean((test$Life.expectancy - pred.lasso)^2))  # test error
+coef.lasso <- predict(fit.lasso, type="coefficients", s=lambda)[1:ncol(life_exp),]
+coef.lasso[coef.lasso != 0]
+length(coef.lasso[coef.lasso != 0])
+```
